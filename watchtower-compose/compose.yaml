@@ -3,7 +3,7 @@ services:
     image: containrrr/watchtower:latest
     container_name: watchtower
     environment:
-      - TZ=YOURTIMEZONE
+      - TZ=Europe/London
       - WATCHTOWER_CLEANUP=true
       - WATCHTOWER_INCLUDE_STOPPED=true
       - WATCHTOWER_REVIVE_STOPPED=false
