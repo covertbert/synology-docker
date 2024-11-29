@@ -9,7 +9,7 @@ services:
       - UMASK=022
     volumes:
       - /volume2/config/sabnzbd:/config
-      - /volume1/data/usenet:/data/usenet
+      - /volume2/downloading/usenet:/data/usenet
     ports:
       - 8080:8080/tcp
     network_mode: synobridge
