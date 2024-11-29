@@ -1,0 +1,18 @@
+services:
+  sabnzbd:
+    image: linuxserver/sabnzbd:latest
+    container_name: sabnzbd
+    environment:
+      - PUID=1027
+      - PGID=65536
+      - TZ=Europe/London
+      - UMASK=022
+    volumes:
+      - /volume2/config/sabnzbd:/config
+      - /volume1/data/usenet:/data/usenet
+    ports:
+      - 8080:8080/tcp
+    network_mode: synobridge
+    security_opt:
+      - no-new-privileges:true
+    restart: always
