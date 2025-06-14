@@ -37,8 +37,6 @@ services:
     network_mode: 'service:wg-ivpn'
     environment:
       - SSH_PASSWORD=ChangeMe! # pick a strong one
-    ports:
-      - '2222:22' # host port for SSH
     restart: unless-stopped
 
   prowlarr:
