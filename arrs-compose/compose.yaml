@@ -34,7 +34,7 @@ services:
   test-ssh:
     image: rastasheep/ubuntu-sshd:18.04
     container_name: test-vpn-ssh
-    network_mode: 'service:wg-ivpn-test'
+    network_mode: 'service:wg-ivpn'
     environment:
       - SSH_PASSWORD=ChangeMe! # pick a strong one
     ports:
