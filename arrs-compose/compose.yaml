@@ -11,8 +11,9 @@ x-common-config: &common-config
 
 services:
   wg-ivpn:
-    image: ghcr.io/linuxserver/wireguard:legacy
+    image: linuxserver/wireguard:legacy
     container_name: wg-ivpn
+    platform: linux/amd64
     cap_add:
       - NET_ADMIN
       - SYS_MODULE
