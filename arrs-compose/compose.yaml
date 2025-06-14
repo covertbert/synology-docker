@@ -10,36 +10,6 @@ x-common-config: &common-config
   restart: always
 
 services:
-  wg-ivpn:
-    image: linuxserver/wireguard:legacy
-    container_name: wg-ivpn
-    platform: linux/amd64
-    cap_add:
-      - NET_ADMIN
-      - SYS_MODULE
-    environment:
-      - PUID=1027
-      - PGID=65536
-      - TZ=Europe/London
-      - SERVERURL=auto # or explicit IVPN endpoint
-      - SERVERPORT=51820
-      - PEERS=1
-      - PEERDNS=auto
-      - INTERNAL_SUBNET=10.13.13.0
-    volumes:
-      - /volume2/config/wireguard:/config # place your wg0.conf here
-    sysctls:
-      - net.ipv4.conf.all.src_valid_mark=1
-    restart: unless-stopped
-
-  test-ssh:
-    image: rastasheep/ubuntu-sshd:18.04
-    container_name: test-vpn-ssh
-    network_mode: 'service:wg-ivpn'
-    environment:
-      - SSH_PASSWORD=ChangeMe! # pick a strong one
-    restart: unless-stopped
-
   prowlarr:
     <<: *common-config
     image: linuxserver/prowlarr:latest
