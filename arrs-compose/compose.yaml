@@ -11,7 +11,7 @@ x-common-config: &common-config
 
 services:
   wg-ivpn:
-    image: ghcr.io/linuxserver/wireguard:latest
+    image: ghcr.io/linuxserver/wireguard:legacy
     container_name: wg-ivpn
     cap_add:
       - NET_ADMIN
@@ -20,13 +20,13 @@ services:
       - PUID=1027
       - PGID=65536
       - TZ=Europe/London
-      - SERVERURL=auto          # or explicit IVPN endpoint
+      - SERVERURL=auto # or explicit IVPN endpoint
       - SERVERPORT=51820
       - PEERS=1
       - PEERDNS=auto
       - INTERNAL_SUBNET=10.13.13.0
     volumes:
-      - /volume2/config/wireguard:/config    # place your wg0.conf here
+      - /volume2/config/wireguard:/config # place your wg0.conf here
     sysctls:
       - net.ipv4.conf.all.src_valid_mark=1
     restart: unless-stopped
