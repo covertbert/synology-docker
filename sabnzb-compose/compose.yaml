@@ -1,3 +1,5 @@
+name: sabnzb
+
 services:
   sabnzbd:
     image: linuxserver/sabnzbd:latest

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# One-time NAS bootstrap that prepares a dedicated deployment account for
-# GitHub Actions. Run as root on the NAS with the CI public key supplied in
-# PUBKEY. Idempotent: re-running with the same or a rotated key is safe.
+# One-time DSM bootstrap. Upload first, then run interactively:
+#   ssh nas 'cat > /tmp/bootstrap-nas.sh' < shell/bootstrap-nas.sh
+#   ssh -t nas "sudo env PUBKEY='$(cat ~/.ssh/synology-deploy-ci.pub)' /usr/bin/bash /tmp/bootstrap-nas.sh"
 set -Eeuo pipefail
 
 : "${PUBKEY:?PUBKEY is required}"
@@ -9,49 +9,57 @@ set -Eeuo pipefail
 DEPLOY_USER=synodeploy
 PROJECTS=/volume2/docker/projects
 DOCKER=/usr/local/bin/docker
+SUDO=/usr/bin/sudo
 SUDOERS=/etc/sudoers.d/synodeploy-docker
 SYNOUSER=/usr/syno/sbin/synouser
 SYNOGROUP=/usr/syno/sbin/synogroup
 
-if [ "$(id -u)" -ne 0 ]; then
-  echo "error: run as root (ssh -t nas 'sudo bash -s' < shell/bootstrap-nas.sh)" >&2
-  exit 1
-fi
+[ "$(id -u)" -eq 0 ] || { echo 'error: run as root' >&2; exit 1; }
+
+add_group_member() {
+  local group="$1" user="$2" raw member
+  local -a members=()
+  raw="$(awk -F: -v group="$group" '$1 == group { print $4 }' /etc/group)"
+  IFS=',' read -r -a members <<< "$raw"
+  for member in "${members[@]}"; do
+    [ "$member" = "$user" ] && return
+  done
+  members+=("$user")
+  "$SYNOGROUP" --member "$group" "${members[@]}" >/dev/null
+}
 
 if ! id "$DEPLOY_USER" >/dev/null 2>&1; then
-  # Password login is never used: SSH accepts the CI key only. A random
-  # password satisfies synouser without creating a usable credential.
-  pw="$(head -c 48 /dev/urandom | base64 | tr -d '\n')"
-  "$SYNOUSER" --add "$DEPLOY_USER" "$pw" "CI deploy" 0 >/dev/null
+  password="$(head -c 48 /dev/urandom | base64 | tr -d '\n')"
+  "$SYNOUSER" --add "$DEPLOY_USER" "$password" 'CI deploy' 0 '' 0 >/dev/null
   echo "created user $DEPLOY_USER"
-else
-  echo "user $DEPLOY_USER already exists"
 fi
 
-# Membership of `users` lets the account read 0640 .env files that remain
-# owned by the primary NAS account.
-"$SYNOGROUP" --member users "$DEPLOY_USER" >/dev/null 2>&1 || true
+# DSM permits SSH only for administrators. Docker control is root-equivalent,
+# so this account remains dedicated to CI and uses an SSH key, not its password.
+add_group_member administrators "$DEPLOY_USER"
 
-home="$(awk -F: -v u="$DEPLOY_USER" '$1 == u { print $6 }' /etc/passwd)"
-[ -n "$home" ] || { echo "error: no home directory recorded for $DEPLOY_USER" >&2; exit 1; }
+home="$(awk -F: -v user="$DEPLOY_USER" '$1 == user { print $6 }' /etc/passwd)"
+[ -n "$home" ] || { echo "error: no home for $DEPLOY_USER" >&2; exit 1; }
 mkdir -p "$home/.ssh"
 chown -R "$DEPLOY_USER:users" "$home"
 chmod 700 "$home" "$home/.ssh"
 
-ak="$home/.ssh/authorized_keys"
-touch "$ak"
-chown "$DEPLOY_USER:users" "$ak"
-chmod 600 "$ak"
-if ! grep -qF "$PUBKEY" "$ak"; then
-  printf '%s\n' "$PUBKEY" >> "$ak"
-  echo "authorized CI key"
-else
-  echo "CI key already authorized"
-fi
+case "$PUBKEY" in
+  'ssh-ed25519 '*) ;;
+  *) echo 'error: PUBKEY must be an Ed25519 public key' >&2; exit 1 ;;
+esac
 
-# Docker Compose needs the full CLI, and the Compose CLI is what performs the
-# apply. Restrict to the deploy account and to the docker binary only.
-umask 077
+key_file="$home/.ssh/authorized_keys"
+key_blob="$(awk '{ print $2 }' <<< "$PUBKEY")"
+tmp="$(mktemp)"
+touch "$key_file"
+grep -vF "$key_blob" "$key_file" > "$tmp" || true
+printf 'restrict %s\n' "$PUBKEY" >> "$tmp"
+cat "$tmp" > "$key_file"
+rm -f "$tmp"
+chown "$DEPLOY_USER:users" "$key_file"
+chmod 600 "$key_file"
+
 cat > "$SUDOERS" <<EOF
 Defaults:$DEPLOY_USER !requiretty
 $DEPLOY_USER ALL=(root) NOPASSWD: $DOCKER
@@ -59,38 +67,20 @@ EOF
 chown root:root "$SUDOERS"
 chmod 0440 "$SUDOERS"
 
-# visudo is not installed on DSM; a parse failure makes sudo unusable for the
-# deploy account, so remove the rule rather than risk a partial install.
-if ! sudo -l -U "$DEPLOY_USER" >/dev/null 2>&1; then
+if ! "$SUDO" -u "$DEPLOY_USER" -- "$SUDO" -n "$DOCKER" version >/dev/null 2>&1; then
   rm -f "$SUDOERS"
-  echo "error: sudoers validation failed, rule removed" >&2
+  echo 'error: sudoers validation failed; rule removed' >&2
   exit 1
 fi
-echo "installed $SUDOERS"
 
-if ! sudo -u "$DEPLOY_USER" -- "$DOCKER" version >/dev/null 2>&1; then
-  echo "error: $DEPLOY_USER cannot run docker through sudo" >&2
-  exit 1
-fi
-echo "verified docker access for $DEPLOY_USER"
-
-# Live Compose trees are world-writable by default. Keep the primary account as
-# owner, drop world write, and let the deploy account write via group.
-if [ -d "$PROJECTS" ]; then
-  chown -R covertbert:users "$PROJECTS"
-  find "$PROJECTS" -type d -exec chmod 775 {} +
-  find "$PROJECTS" -type f -name 'compose.yaml' -exec chmod 664 {} +
-  find "$PROJECTS" -type f -name '.env' -exec chmod 640 {} +
-  echo "hardened $PROJECTS"
-fi
-
-# Compose reads each stack's .env for interpolation, so the deploy account must
-# be able to read it. Fail loudly rather than deploy silently broken config.
-while IFS= read -r env_file; do
-  if ! sudo -u "$DEPLOY_USER" -- test -r "$env_file"; then
-    echo "error: $DEPLOY_USER cannot read $env_file" >&2
-    exit 1
-  fi
-done < <(find "$PROJECTS" -type f -name '.env' 2>/dev/null)
+chown covertbert:users "$PROJECTS"
+chmod 775 "$PROJECTS"
+for stack in "$PROJECTS"/*-compose; do
+  [ -d "$stack" ] || continue
+  chown -R covertbert:users "$stack"
+  find "$stack" -type d -exec chmod 775 {} +
+  find "$stack" -type f ! -name '.env' -exec chmod 664 {} +
+  find "$stack" -type f -name '.env' -exec chmod 640 {} +
+done
 
 echo "bootstrap complete: $DEPLOY_USER"

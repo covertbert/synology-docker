@@ -1,3 +1,5 @@
+name: tmdb-radarr
+
 services:
   tmdb-radarr-digital:
     image: docker.io/covertbert/tmdb-radarr-updater:latest
@@ -6,13 +8,13 @@ services:
     security_opt:
       - no-new-privileges:true
     environment:
-      - TMDB_API_KEY=${TMDB_API_KEY}
+      - TMDB_API_KEY=${TMDB_API_KEY:?set TMDB_API_KEY in .env}
       - TMDB_LANGUAGE=en-US
       - TMDB_MIN_SCORE=7
       - TMDB_MIN_VOTE_COUNT=500
       - TMDB_RELEASE_WINDOW_DAYS=14
       - RADARR_URL=http://192.168.178.64:7878
-      - RADARR_API_KEY=${RADARR_API_KEY}
+      - RADARR_API_KEY=${RADARR_API_KEY:?set RADARR_API_KEY in .env}
       - RADARR_ROOT_FOLDER_PATH=/data/media/movies
       - RADARR_QUALITY_PROFILE_NAME=Prefer 1080 - Allow 4k
       - RADARR_SEARCH_ON_ADD=true

@@ -1,3 +1,5 @@
+name: arrs
+
 x-common-config: &common-config
   environment:
     - PUID=1027

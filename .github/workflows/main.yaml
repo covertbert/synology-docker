@@ -1,0 +1,73 @@
+name: main
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Validate Compose deployment
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Validate Compose files
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          for file in *-compose/compose.yaml; do
+            directory="${file%/compose.yaml}"
+            args=(compose --project-directory "$directory" -f "$file")
+            [[ -f "$directory/.env.example" ]] && args+=(--env-file "$directory/.env.example")
+            docker "${args[@]}" config -q
+          done
+
+      - name: Validate shell scripts
+        run: |
+          bash -n shell/*.sh
+          shellcheck shell/*.sh
+          shell/test-nas-deploy.sh
+
+  deploy:
+    name: Deploy NAS Compose stacks
+    needs: validate
+    if: github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    concurrency:
+      group: synology-docker-deploy
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Connect Tailscale
+        uses: tailscale/github-action@d1b6cd204f8dceda5b3eaad7f1f767be390056cd # v4.2.0
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:ci
+          ping: synologynas.mole-anaconda.ts.net
+
+      - name: Configure SSH
+        shell: bash
+        env:
+          NAS_SSH_PRIVATE_KEY: ${{ secrets.NAS_SSH_PRIVATE_KEY }}
+        run: |
+          set -Eeuo pipefail
+          key="$RUNNER_TEMP/nas-deploy-key"
+          hosts="$RUNNER_TEMP/nas-known-hosts"
+          umask 077
+          printf '%s\n' "$NAS_SSH_PRIVATE_KEY" > "$key"
+          printf '%s\n' 'synologynas.mole-anaconda.ts.net ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIKqK/6/bddv51V7ITfQ1id8KL5RQVi2PZLO+4t1JOFgW' > "$hosts"
+          echo "NAS_SSH_KEY_FILE=$key" >> "$GITHUB_ENV"
+          echo "NAS_KNOWN_HOSTS_FILE=$hosts" >> "$GITHUB_ENV"
+
+      - name: Deploy tracked Compose definitions
+        env:
+          NAS_HOST: synologynas.mole-anaconda.ts.net
+          NAS_USER: synodeploy
+        run: shell/deploy.sh

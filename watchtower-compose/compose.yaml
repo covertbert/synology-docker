@@ -1,3 +1,5 @@
+name: watchtower
+
 services:
   watchtower:
     image: containrrr/watchtower:latest
