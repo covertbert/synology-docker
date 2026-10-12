@@ -1,6 +1,6 @@
 # Synology Docker Compose
 
-Docker Compose definitions for selected services on `SynologyNAS`. GitHub Actions validates every change and deploys validated pushes to `main` over Tailscale and SSH.
+Docker Compose definitions for selected services on a Synology NAS. GitHub Actions validates every change and deploys validated pushes to `main` over Tailscale and SSH.
 
 ## Managed stacks
 
@@ -10,8 +10,6 @@ Docker Compose definitions for selected services on `SynologyNAS`. GitHub Action
 | `sabnzb-compose` | `sabnzb` | SABnzbd | 8080 | `/volume2/config/sabnzbd`, `/volume1/data` |
 | `tmdb-radarr-compose` | `tmdb-radarr` | TMDB/Radarr updater, Ofelia | none | NAS-local `.env`; Docker socket read-only for Ofelia |
 | `watchtower-compose` | `watchtower` | Watchtower | none | Docker socket |
-
-`/volume2/docker/whisparr` is not managed by this repository or its deployment workflow.
 
 ## Layout
 
@@ -44,7 +42,7 @@ For a new secret-bearing stack:
 
 ## One-time deployment setup
 
-The NAS is configured with a dedicated `synodeploy` account. DSM requires SSH accounts to be administrators. Docker access is root-equivalent, so this account is reserved for CI, uses a separate SSH key, and has passwordless sudo for `/usr/local/bin/docker` only.
+The NAS is configured with a dedicated deployment account. DSM requires SSH accounts to be administrators. Docker access is root-equivalent, so this account is reserved for CI, uses a separate SSH key, and has passwordless sudo for `/usr/local/bin/docker` only.
 
 Generate its key locally:
 
@@ -55,12 +53,12 @@ ssh-keygen -t ed25519 -C synology-deploy-ci -f ~/.ssh/synology-deploy-ci -N ''
 Bootstrap the NAS. The first command uploads the script without consuming the password prompt; the second allocates a terminal for sudo:
 
 ```bash
-ssh nas 'cat > /tmp/bootstrap-nas.sh' < shell/bootstrap-nas.sh
-ssh -t nas "sudo env PUBKEY='$(cat ~/.ssh/synology-deploy-ci.pub)' /usr/bin/bash /tmp/bootstrap-nas.sh"
-ssh nas 'rm -f /tmp/bootstrap-nas.sh'
+ssh <nas-host> 'cat > /tmp/bootstrap-nas.sh' < shell/bootstrap-nas.sh
+ssh -t <nas-host> "sudo env PUBKEY='$(cat ~/.ssh/synology-deploy-ci.pub)' /usr/bin/bash /tmp/bootstrap-nas.sh"
+ssh <nas-host> 'rm -f /tmp/bootstrap-nas.sh'
 ```
 
-The script is idempotent. It creates or updates `synodeploy`, installs the restricted CI key, configures Docker sudo access, and changes managed stack directories to group-writable and `.env` files to group-readable.
+The script is idempotent. It creates or updates the deployment account, installs the restricted CI key, configures Docker sudo access, and changes managed stack directories to group-writable and `.env` files to group-readable.
 
 GitHub repository secrets required by the workflow:
 
@@ -70,7 +68,7 @@ GitHub repository secrets required by the workflow:
 | `TS_OAUTH_CLIENT_ID` | dedicated Tailscale OAuth client ID |
 | `TS_OAUTH_SECRET` | dedicated Tailscale OAuth client secret |
 
-Create the Tailscale client at [Trust credentials](https://console.tailscale.com/admin/settings/trust-credentials): select **Credential**, **OAuth**, enable **Auth keys: Write**, and assign `tag:ci`. The tailnet policy must permit `tag:ci` to SSH to the NAS. Current policy allows this already.
+Create the Tailscale client at [Trust credentials](https://console.tailscale.com/admin/settings/trust-credentials): select **Credential**, **OAuth**, enable **Auth keys: Write**, and assign `tag:ci`. Tailnet policy must permit `tag:ci` to SSH to deployment target.
 
 ```bash
 gh secret set NAS_SSH_PRIVATE_KEY --repo covertbert/synology-docker < ~/.ssh/synology-deploy-ci
@@ -121,14 +119,14 @@ shell/test-nas-deploy.sh
 Inspect deployed projects:
 
 ```bash
-ssh -i ~/.ssh/synology-deploy-ci synodeploy@synologynas.mole-anaconda.ts.net \
+ssh -i ~/.ssh/synology-deploy-ci <deploy-user>@<nas-host> \
   'sudo -n /usr/local/bin/docker compose ls'
 ```
 
 Inspect one stack:
 
 ```bash
-ssh nas 'cd /volume2/docker/projects/arrs-compose && sudo /usr/local/bin/docker compose ps'
+ssh <nas-host> 'cd /volume2/docker/projects/arrs-compose && sudo /usr/local/bin/docker compose ps'
 ```
 
 Deploy normally by committing and pushing to `main`:
@@ -150,7 +148,7 @@ git push
 Deletion is intentionally not automated. Remove it manually after confirming data retention requirements:
 
 ```bash
-ssh nas 'cd /volume2/docker/projects/<name>-compose && sudo /usr/local/bin/docker compose down'
+ssh <nas-host> 'cd /volume2/docker/projects/<name>-compose && sudo /usr/local/bin/docker compose down'
 ```
 
 Then remove its NAS directory and `.env` if appropriate, followed by its repository directory. This protects containers, volumes, and secrets from accidental deletion caused by a Git change.
@@ -162,7 +160,7 @@ Revert the bad commit and push `main`. The workflow promotes the prior tracked C
 For an urgent NAS-only rollback:
 
 ```bash
-ssh nas 'cd /volume2/docker/projects/<stack>-compose && sudo /usr/local/bin/docker compose up -d --remove-orphans --wait --wait-timeout 120'
+ssh <nas-host> 'cd /volume2/docker/projects/<stack>-compose && sudo /usr/local/bin/docker compose up -d --remove-orphans --wait --wait-timeout 120'
 ```
 
 The NAS deployment state is under `/volume2/docker/projects/.deploy`. Do not manually modify it during an active deployment.
@@ -173,11 +171,10 @@ The NAS deployment state is under `/volume2/docker/projects/.deploy`. Do not man
 | --- | --- |
 | Tailscale step cannot reach NAS | Tailscale policy must allow `tag:ci` to NAS port 22. |
 | SSH host-key error | NAS SSH host key changed; verify it out of band before changing workflow value. |
-| `sudo` password prompt in CI | Re-run bootstrap and verify `sudo -l -U synodeploy` on NAS. |
+| `sudo` password prompt in CI | Re-run bootstrap and verify `sudo -l -U <deploy-user>` on target. |
 | Missing variable during deployment | Create or correct NAS-local `.env`; do not add secret to GitHub. |
 | Compose apply times out | Review `docker compose ps` and service logs on NAS. Prior Compose file is restored on workflow failure. |
 | Existing containers appear as a new project | Restore matching top-level `name:` value. |
-| Whisparr changed | It should not: it lives outside managed deployment root. Investigate manually. |
 
 ## Security boundaries
 
@@ -186,4 +183,4 @@ The NAS deployment state is under `/volume2/docker/projects/.deploy`. Do not man
 - Tailscale runners are ephemeral and tagged `tag:ci`.
 - SSH uses a dedicated key, a pinned NAS Ed25519 host key, `BatchMode`, and strict host-key checking.
 - NAS has no GitHub credential and does not fetch this repository.
-- Docker control is root-equivalent. Restrict access to `synodeploy` and rotate its SSH key by replacing `~synodeploy/.ssh/authorized_keys` and `NAS_SSH_PRIVATE_KEY` together.
+- Docker control is root-equivalent. Restrict access to deployment account and rotate its SSH key and `NAS_SSH_PRIVATE_KEY` together.
