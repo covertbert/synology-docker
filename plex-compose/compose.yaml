@@ -1,0 +1,22 @@
+name: plex
+
+services:
+  plex:
+    image: plexinc/pms-docker:latest
+    container_name: plex
+    hostname: SynologyNAS
+    network_mode: host
+    environment:
+      - TZ=Europe/London
+      - PLEX_UID=1027
+      - PLEX_GID=65536
+    volumes:
+      - /volume2/config/plex:/config
+      - /volume2/config/plex-transcode:/transcode
+      - /volume1/data/media:/volume1/data/media
+      # Migrated metadata audio retains absolute Synology package paths.
+      - /volume2/config/plex/Library/Application Support/Plex Media Server/Metadata:/var/packages/PlexMediaServer/shares/PlexMediaServer/AppData/Plex Media Server/Metadata:ro
+    security_opt:
+      - no-new-privileges:true
+    stop_grace_period: 60s
+    restart: unless-stopped

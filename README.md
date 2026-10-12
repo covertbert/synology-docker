@@ -9,6 +9,7 @@ Docker Compose definitions for selected services on a Synology NAS. GitHub Actio
 | `arrs-compose` | `arrs` | Prowlarr, Sonarr, Lidarr, Radarr, Readarr, Bazarr, Overseerr | 9696, 8989, 8686, 7878, 8787, 6767, 5055 | `/volume2/config/*`, `/volume1/data` |
 | `sabnzb-compose` | `sabnzb` | SABnzbd | 8080 | `/volume2/config/sabnzbd`, `/volume1/data` |
 | `tmdb-radarr-compose` | `tmdb-radarr` | TMDB/Radarr updater, Ofelia | none | NAS-local `.env`; Docker socket read-only for Ofelia |
+| `plex-compose` | `plex` | Plex Media Server | host network (32400) | `/volume2/config/plex`, `/volume2/config/plex-transcode`, `/volume1/data/media` |
 | `watchtower-compose` | `watchtower` | Watchtower | none | Docker socket |
 
 ## Layout
@@ -26,6 +27,53 @@ shell/
 ```
 
 Each Compose file declares `name:`. Do not change it after deployment: Docker uses it to identify existing containers and the workflow depends on it to avoid creating duplicate projects.
+
+## Plex Media Server
+
+The Plex container replaces the native Synology package. It uses the official `plexinc/pms-docker:latest` image, host networking, and no claim token: the server identity, preferences, and account token come from the migrated data directory, so `app.plex.tv` and existing shared users keep seeing the same server.
+
+Persistent paths:
+
+| Host path | Container path | Purpose |
+| --- | --- | --- |
+| `/volume2/config/plex` | `/config` | Plex data directory (`/config/Library/Application Support/Plex Media Server`) |
+| `/volume2/config/plex-transcode` | `/transcode` | Transcoder scratch space; needs tens of GB of free space |
+| `/volume1/data/media` | `/volume1/data/media` | Media libraries, mounted at identical absolute paths so stored library locations stay valid |
+| `/volume2/config/plex/Library/Application Support/Plex Media Server/Metadata` | `/var/packages/PlexMediaServer/shares/PlexMediaServer/AppData/Plex Media Server/Metadata` | Read-only alias for migrated metadata audio that retains absolute Synology package paths; uses the Docker copy, not native package data |
+
+Plex runs as UID/GID `1027:65536` (`dockerlimited:dockergroup`), matching the other stacks in this repository and the Synology ACL that grants `dockergroup` access to `/volume2/config/*` and to the media tree. Host networking preserves the NAS address and port 32400 and avoids bridge-network discovery and port-forwarding configuration.
+
+Only one Plex instance may run at a time. Starting the container while the native package still runs causes a port 32400 conflict, and two servers sharing one machine identifier conflict in Plex cloud services.
+
+### Update behaviour
+
+The stable `latest` image contains the Plex binary. Watchtower checks for image updates nightly at 02:00 Europe/London and recreates containers when updates are available. Image publication can lag the upstream release. The `public` and `beta` tags instead check for Plex updates at startup; they are not used here. Do not add `PLEX_CLAIM` to this migrated, already-claimed server.
+
+Back up `/volume2/config/plex` with Plex stopped or with a database-consistent backup procedure. The transcode directory is disposable. Image or Compose rollback does not undo a database schema upgrade; retain a compatible data backup before upgrades.
+
+Plex 1.43.4.10903 adds an empty local `accounts` database row on startup in this installation. Original account records and watch state remain unchanged. This matches a [Plex forum report acknowledged by staff](https://forums.plex.tv/t/users-keep-increasing-in-database/936602). Local database accounts are not the Plex Home membership list. No database repair or row deletion is applied.
+
+### One-time cutover from the native package
+
+Preparation runs while native Plex stays online. Cutover requires a stop of the native package and a short outage.
+
+1. Create the host directories `/volume2/docker/projects/plex-compose`, `/volume2/config/plex/Library/Application Support/Plex Media Server`, and `/volume2/config/plex-transcode`.
+2. Pull `plexinc/pms-docker:latest` and pre-copy the native data directory from `/volume1/PlexMediaServer/AppData/Plex Media Server` with `rsync`.
+3. In Plex Web, disable **Settings → Library → Empty trash automatically after every scan**.
+4. Stop Plex Media Server in DSM Package Center. Confirm no Plex process remains and nothing listens on port 32400.
+5. Re-run the final `rsync --delete` copy while the database is closed, then set ownership on the destination to UID/GID `1027:65536`.
+6. Start the stack with `docker compose up -d --wait --wait-timeout 120` and verify server identity, libraries, watch state, and playback. Re-enable automatic trash emptying once media mounts are confirmed.
+
+### Rollback
+
+The native package retains its pre-cutover data, with automatic trash emptying disabled. Keep it installed but stopped during the rollback window. Do not allow DSM to restart or update it while Docker Plex is running.
+
+1. Stop the container.
+2. Confirm port 32400 is released.
+3. Restart Plex Media Server in DSM Package Center.
+4. Re-enable automatic trash emptying if it was disabled.
+
+Rollback restores state as of the cutover. Watch state and metadata written after Docker Plex starts are not propagated back to the native data directory. Do not copy an upgraded Docker database over the older native database or run both servers simultaneously.
 
 ## Secrets
 
@@ -92,6 +140,8 @@ gh secret set TS_OAUTH_SECRET --repo covertbert/synology-docker
 7. Apply failure restores prior Compose definitions and re-applies them. A revision marker advances only after full success.
 
 Deployments do not pull images. Watchtower owns updates for current image tags.
+
+The Plex stack must not be deployed through this pipeline while the native Synology Plex package is still running: the application would compete for port 32400, and its host-network healthcheck could reach the native server instead. Add the stack, perform the cutover manually, and only then push the definition to `main`.
 
 Run a reconciliation manually from GitHub: **Actions → main → Run workflow**. It uploads current tracked definitions; unchanged stacks are not re-applied.
 
