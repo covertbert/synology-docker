@@ -2,7 +2,7 @@ name: watchtower
 
 services:
   watchtower:
-    image: containrrr/watchtower:latest
+    image: nickfedor/watchtower:latest
     container_name: watchtower
     environment:
       - TZ=Europe/London

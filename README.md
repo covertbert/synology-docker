@@ -12,6 +12,8 @@ Docker Compose definitions for selected services on a Synology NAS. GitHub Actio
 | `plex-compose` | `plex` | Plex Media Server | host network (32400) | `/volume2/config/plex`, `/volume2/config/plex-transcode`, `/volume1/data/media` |
 | `watchtower-compose` | `watchtower` | Watchtower | none | Docker socket |
 
+The Watchtower stack runs `nickfedor/watchtower`, the maintained fork. Upstream `containrrr/watchtower` was archived on 2025-12-17 and its last release was v1.7.1. The fork keeps the same container name, schedule, and `WATCHTOWER_*` variables, so the Compose definition is otherwise unchanged. Its releases are published on Docker Hub as `nickfedor/watchtower`.
+
 ## Layout
 
 ```text
